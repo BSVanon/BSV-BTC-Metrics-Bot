@@ -1,0 +1,12 @@
+{
+  "name": "bsv-btc-metrics-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "post": "node post-metrics.js"
+  },
+  "dependencies": {
+    "twitter-api-v2": "^1.15.0"
+  }
+}

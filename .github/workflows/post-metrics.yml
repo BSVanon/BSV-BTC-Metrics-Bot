@@ -31,3 +31,4 @@ jobs:
             git push
           else
             echo "package-lock.json not found" && exit 1
+          fi

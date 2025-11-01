@@ -1,29 +1,32 @@
 name: Generate package-lock.json (one-time)
 
 on:
-  workflow_dispatch: {}   # Run manually from the Actions tab
+  workflow_dispatch: {}
 
 permissions:
-  contents: write         # allow this job to push a commit
+  contents: write
 
 jobs:
   lockfile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ensure we can push back
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Create lockfile only (no build), quiet flags to speed it up
       - run: npm install --package-lock-only --no-audit --no-fund
 
-      # Commit the lockfile back to your default branch
       - name: Commit package-lock.json
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git diff --cached --quiet || git commit -m "chore: add package-lock.json"
-          git push
+          if [ -f package-lock.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git diff --cached --quiet || git commit -m "chore: add package-lock.json"
+            git push
+          else
+            echo "package-lock.json not found" && exit 1

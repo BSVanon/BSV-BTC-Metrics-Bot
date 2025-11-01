@@ -1,24 +1,31 @@
-name: Post BTC/BSV Metrics
+name: Generate package-lock.json (one-time)
+
 on:
-  schedule:
-    - cron: "0 */8 * * *"     # every 8 hours (UTC)
-  workflow_dispatch: {}        # allow manual runs
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # required to push the commit
 
 jobs:
-  post:
+  lockfile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # we need full history to push back cleanly
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
-      - name: Post metrics
-        run: npm run post
-        env:
-          X_APP_KEY: ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-          BTC_TIER: ${{ vars.BTC_TIER }}
+
+      - name: Create lockfile
+        run: npm install --package-lock-only --no-audit --no-fund
+
+      - name: Commit package-lock.json
+        run: |
+          test -f package-lock.json || (echo "missing lockfile" && exit 1)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git diff --cached --quiet || git commit -m "chore: add package-lock.json"
+          git push

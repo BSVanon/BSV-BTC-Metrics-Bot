@@ -28,8 +28,9 @@ const BTC_TIER_TO_BLOCKS = {
 // If mempool tx count is small, assume 1 block; increase if it grows.
 // Tune thresholds later if you want.
 const BSV_MEMPOOL_TO_BLOCKS = (txCount) => {
-  if (txCount <= 20000) return 1;
-  if (txCount <= 100000) return 2;
+  const n = Number(txCount || 0);
+  if (n <= 20000) return 1;
+  if (n <= 100000) return 2;
   return 3;
 };
 
@@ -56,6 +57,17 @@ function clamp280(text) {
   return text.slice(0, 277) + '...';
 }
 
+function safeNum(n, label) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) throw new Error(`Bad number for ${label}`);
+  return v;
+}
+
+function requireKey(obj, key, hint) {
+  if (!obj || !(key in obj)) throw new Error(`Missing key ${key}${hint ? ` (${hint})` : ''}`);
+  return obj[key];
+}
+
 // ======= DATA FETCHERS =======
 
 // BTC (mempool.space)
@@ -73,139 +85,4 @@ async function fetchBtcFeesAndMempool() {
   return { fees, mempool: mp };
 }
 
-// BSV (GorillaPool MAPI + WhatsOnChain)
-async function fetchBsvFeeQuoteAndMempool() {
-  // GorillaPool MAPI feeQuote (public)
-  // Shape: { payload: base64(json), signature, publicKey, encoding }
-  const mapiRes = await fetch('https://mapi.gorillapool.io/mapi/feeQuote', { headers: { 'accept': 'application/json' }});
-if (!mapiRes.ok) throw new Error(`BSV MAPI HTTP ${mapiRes.status}`);
-const mapi = await mapiRes.json();
-
-// Some MAPI servers return payload as plain JSON string; others use base64.
-// Try direct JSON parse first, then fall back to base64 decode.
-let payloadJson;
-try {
-  payloadJson = JSON.parse(mapi.payload);
-} catch {
-  try {
-    const decoded = Buffer.from(String(mapi.payload), 'base64').toString('utf8');
-    payloadJson = JSON.parse(decoded);
-  } catch (e) {
-    throw new Error(`BSV MAPI payload parse failed`);
-  }
-}
-
-  // payloadJson.fees => [{ feeType: 'standard'|'data', miningFee: { satoshis, bytes }, relayFee: {...} }, ...]
-  // Prefer miningFee for pricing.
-  const standardFee = payloadJson.fees.find(f => f.feeType.toLowerCase() === 'standard');
-  const dataFee = payloadJson.fees.find(f => f.feeType.toLowerCase() === 'data') || standardFee;
-
-  // WhatsOnChain mempool info (public)
-  const wocRes = await fetch('https://api.whatsonchain.com/v1/bsv/main/mempool/info', { headers: { 'accept': 'application/json' }});
-  if (!wocRes.ok) throw new Error(`BSV WOC HTTP ${wocRes.status}`);
-  const woc = await wocRes.json(); // { size, count }
-
-  return { standardFee, dataFee, mempool: woc };
-}
-
-// ======= CALCULATIONS =======
-
-function calcBtcSimpleFeeSats(fees) {
-  const satPerVb = Number(fees[BTC_TIER]);
-  return Math.round(satPerVb * BTC_SIMPLE_VBYTES); // sats
-}
-
-function calcBtcEtaMinutes(fees) {
-  const blocks = BTC_TIER_TO_BLOCKS[BTC_TIER] ?? 6;
-  return blocks * 10; // ~10 min/block
-}
-
-function calcBtcOneKbSats(fees) {
-  const satPerVb = Number(fees[BTC_TIER]);
-  return Math.round(satPerVb * ONE_KB);
-}
-
-function calcBsvSimpleFeeSats(standardFee) {
-  // standardFee.miningFee = { satoshis, bytes }
-  const satPerByte = Number(standardFee.miningFee.satoshis) / Number(standardFee.miningFee.bytes);
-  return Math.max(1, Math.round(satPerByte * BSV_SIMPLE_BYTES));
-}
-
-function calcBsvOneKbSats(dataFee) {
-  const satPerByte = Number(dataFee.miningFee.satoshis) / Number(dataFee.miningFee.bytes);
-  return Math.max(1, Math.round(satPerByte * ONE_KB));
-}
-
-function calcBsvEtaMinutes(mempool) {
-  const blocks = BSV_MEMPOOL_TO_BLOCKS(Number(mempool.count ?? 0));
-  return blocks * 10;
-}
-
-// ======= TWEET BUILDER =======
-
-function buildTweet({
-  btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
-  bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
-}) {
-  // 3-line human-friendly format + link
-  const line1 = `BTC fee:${btcFeeSats}s ~${btcEtaMin}m | BSV fee:${bsvFeeSats}s ~${bsvEtaMin}m`;
-  const line2 = `1KB data — BTC:${btc1kbSats}s | BSV:${bsv1kbSats}s`;
-  const line3 = `Backlog — BTC:${abbr(btcBacklogCount)}tx(~${btcBacklogBlocks}b) | BSV:${abbr(bsvBacklogCount)}tx(~${bsvBacklogBlocks}b)`;
-  const more = EXPLAINER_URL ? `\nMore: ${EXPLAINER_URL}` : '';
-
-  return clamp280(`${line1}\n${line2}\n${line3}${more}`);
-}
-
-// ======= MAIN =======
-
-async function main() {
-  // Fetch
-  const [{ fees: btcFees, mempool: btcMp }, { standardFee, dataFee, mempool: bsvMp }] = await Promise.all([
-    fetchBtcFeesAndMempool(),
-    fetchBsvFeeQuoteAndMempool()
-  ]);
-
-  // Compute BTC
-  const btcFeeSats  = calcBtcSimpleFeeSats(btcFees);
-  const btcEtaMin   = calcBtcEtaMinutes(btcFees);
-  const btc1kbSats  = calcBtcOneKbSats(btcFees);
-  // Approx backlog in "blocks": mempool vsize / 1,000,000 vB per block (4M weight units → 1M vB)
-  const btcBacklogBlocks = Math.max(0, Math.round((Number(btcMp.vsize || 0) / 1_000_000) * 10) / 10); // 1 decimal
-  const btcBacklogCount  = Number(btcMp.count || 0);
-
-  // Compute BSV
-  const bsvFeeSats  = calcBsvSimpleFeeSats(standardFee);
-  const bsvEtaMin   = calcBsvEtaMinutes(bsvMp);
-  const bsv1kbSats  = calcBsvOneKbSats(dataFee);
-  // BSV backlog "blocks": very rough; assume default 1 block unless mempool grows.
-  const bsvBacklogBlocks = Math.max(1, calcBsvEtaMinutes(bsvMp) / 10); // same buckets as ETA
-  const bsvBacklogCount  = Number(bsvMp.count || 0);
-
-  const text = buildTweet({
-    btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
-    bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
-  });
-
-  // Post
-  const client = new TwitterApi({
-    appKey: process.env.X_APP_KEY,
-    appSecret: process.env.X_APP_SECRET,
-    accessToken: process.env.X_ACCESS_TOKEN,
-    accessSecret: process.env.X_ACCESS_SECRET,
-  });
-
-  const res = await client.v2.tweet(text);
-  console.log('Tweet posted:', res?.data?.id, text);
-}
-
-main().catch(async (e) => {
-  console.error('Fatal error:', e?.message || e);
-  // Optional: backoff retry once if a transient network error
-  try {
-    await sleep(2000);
-    await main();
-  } catch (e2) {
-    console.error('Retry failed:', e2?.message || e2);
-    process.exit(1);
-  }
-});
+// BSV (GorillaPool MAPI + W

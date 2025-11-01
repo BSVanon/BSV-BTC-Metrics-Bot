@@ -22,13 +22,20 @@ jobs:
         run: npm install --package-lock-only --no-audit --no-fund
 
       - name: Commit package-lock.json
+        shell: bash
         run: |
-          if [ -f package-lock.json ]; then
+          set -euo pipefail
+          if [[ -f package-lock.json ]]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add package-lock.json
-            git diff --cached --quiet || git commit -m "chore: add package-lock.json"
-            git push
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: add package-lock.json"
+              git push
+            else
+              echo "No changes to commit (lockfile already present)"
+            fi
           else
-            echo "package-lock.json not found" && exit 1
+            echo "package-lock.json not found"
+            exit 1
           fi

@@ -78,9 +78,23 @@ async function fetchBsvFeeQuoteAndMempool() {
   // GorillaPool MAPI feeQuote (public)
   // Shape: { payload: base64(json), signature, publicKey, encoding }
   const mapiRes = await fetch('https://mapi.gorillapool.io/mapi/feeQuote', { headers: { 'accept': 'application/json' }});
-  if (!mapiRes.ok) throw new Error(`BSV MAPI HTTP ${mapiRes.status}`);
-  const mapi = await mapiRes.json();
-  const payloadJson = JSON.parse(Buffer.from(mapi.payload, 'base64').toString('utf8'));
+if (!mapiRes.ok) throw new Error(`BSV MAPI HTTP ${mapiRes.status}`);
+const mapi = await mapiRes.json();
+
+// Some MAPI servers return payload as plain JSON string; others use base64.
+// Try direct JSON parse first, then fall back to base64 decode.
+let payloadJson;
+try {
+  payloadJson = JSON.parse(mapi.payload);
+} catch {
+  try {
+    const decoded = Buffer.from(String(mapi.payload), 'base64').toString('utf8');
+    payloadJson = JSON.parse(decoded);
+  } catch (e) {
+    throw new Error(`BSV MAPI payload parse failed`);
+  }
+}
+
   // payloadJson.fees => [{ feeType: 'standard'|'data', miningFee: { satoshis, bytes }, relayFee: {...} }, ...]
   // Prefer miningFee for pricing.
   const standardFee = payloadJson.fees.find(f => f.feeType.toLowerCase() === 'standard');

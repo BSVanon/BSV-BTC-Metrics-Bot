@@ -1,3 +1,4 @@
+// post-metrics.js
 // ---- BOOT BANNER (prints even if require fails) ----
 console.log("[metrics-bot] starting post-metrics.js");
 
@@ -7,7 +8,7 @@ try {
   ({ TwitterApi } = require('twitter-api-v2'));
   console.log("[metrics-bot] twitter-api-v2 loaded");
 } catch (e) {
-  console.error("[metrics-bot] require('twitter-api-v2') failed:", e && e.message || e);
+  console.error("[metrics-bot] require('twitter-api-v2') failed:", (e && e.message) || e);
   process.exit(1);
 }
 
@@ -156,13 +157,13 @@ async function main() {
   try {
     await main();
   } catch (e) {
-    console.error("[metrics-bot] Fatal:", e && e.message || e);
+    console.error("[metrics-bot] Fatal:", (e && e.message) || e);
     try {
       console.error("[metrics-bot] Retrying after 2s…");
       await sleep(2000);
       await main();
     } catch (e2) {
-      console.error("[metrics-bot] Retry failed:", e2 && e2.message || e2);
+      console.error("[metrics-bot] Retry failed:", (e2 && e2.message) || e2);
       process.exit(1);
     }
   }

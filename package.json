@@ -1,18 +1,16 @@
 {
   "name": "bsv-btc-metrics-bot",
   "version": "1.0.0",
-  "private": true,
-  "description": "Posts BTC vs BSV fee and mempool metrics to X (Twitter).",
+  "private": false,
+  "description": "Posts BTC vs BSV fee/mempool snapshots to X",
   "license": "MIT",
+  "engines": { "node": ">=20" },
+  "type": "commonjs",
   "scripts": {
-    "post": "node --trace-uncaught --unhandled-rejections=strict post-metrics.js",
-    "post:dry": "DRY_RUN=1 node --trace-uncaught --unhandled-rejections=strict post-metrics.js",
-    "preflight": "node --trace-uncaught --unhandled-rejections=strict preflight.js"
+    "post:tweet": "node post-metrics.js",
+    "post": "node post-metrics.js"
   },
   "dependencies": {
-    "twitter-api-v2": "^1.17.0"
-  },
-  "engines": {
-    "node": ">=18"
+    "twitter-api-v2": "^1.16.0"
   }
 }

@@ -26,7 +26,6 @@ const BTC_TIER_TO_BLOCKS = {
 
 // For BSV ETA, use a simple backlog heuristic
 // If mempool tx count is small, assume 1 block; increase if it grows.
-// Tune thresholds later if you want.
 const BSV_MEMPOOL_TO_BLOCKS = (txCount) => {
   const n = Number(txCount || 0);
   if (n <= 20000) return 1;
@@ -52,7 +51,6 @@ function abbr(n) {
 }
 
 function clamp280(text) {
-  // If we ever exceed 280 chars, trim safely (shouldn't happen with our format).
   if (text.length <= 280) return text;
   return text.slice(0, 277) + '...';
 }
@@ -72,12 +70,10 @@ function requireKey(obj, key, hint) {
 
 // BTC (mempool.space)
 async function fetchBtcFeesAndMempool() {
-  // Recommended fees
   const feesRes = await fetch('https://mempool.space/api/v1/fees/recommended', { headers: { 'accept': 'application/json' }});
   if (!feesRes.ok) throw new Error(`BTC fees HTTP ${feesRes.status}`);
   const fees = await feesRes.json();
 
-  // Mempool stats
   const mpRes = await fetch('https://mempool.space/api/mempool', { headers: { 'accept': 'application/json' }});
   if (!mpRes.ok) throw new Error(`BTC mempool HTTP ${mpRes.status}`);
   const mp = await mpRes.json(); // { count, vsize, total_fee, fee_histogram }
@@ -85,4 +81,159 @@ async function fetchBtcFeesAndMempool() {
   return { fees, mempool: mp };
 }
 
-// BSV (GorillaPool MAPI + W
+// BSV (GorillaPool MAPI + WhatsOnChain)
+async function fetchBsvFeeQuoteAndMempool() {
+  // GorillaPool MAPI feeQuote (public)
+  const mapiRes = await fetch('https://mapi.gorillapool.io/mapi/feeQuote', { headers: { 'accept': 'application/json' }});
+  if (!mapiRes.ok) throw new Error(`BSV MAPI HTTP ${mapiRes.status}`);
+  const mapi = await mapiRes.json();
+
+  // Some MAPI servers return payload as plain JSON string; others use base64.
+  // Try direct JSON parse first, then fall back to base64 decode.
+  let payloadJson;
+  try {
+    payloadJson = JSON.parse(mapi.payload);
+  } catch {
+    try {
+      const decoded = Buffer.from(String(mapi.payload), 'base64').toString('utf8');
+      payloadJson = JSON.parse(decoded);
+    } catch {
+      throw new Error('BSV MAPI payload parse failed');
+    }
+  }
+
+  if (!payloadJson?.fees?.length) throw new Error('BSV MAPI: no fees array in payload');
+
+  // Prefer miningFee for pricing.
+  const standardFee = payloadJson.fees.find(f => f.feeType?.toLowerCase() === 'standard');
+  const dataFee = payloadJson.fees.find(f => f.feeType?.toLowerCase() === 'data') || standardFee;
+  if (!standardFee) throw new Error('BSV MAPI: standard fee not found');
+
+  // WhatsOnChain mempool info (public)
+  const wocRes = await fetch('https://api.whatsonchain.com/v1/bsv/main/mempool/info', { headers: { 'accept': 'application/json' }});
+  if (!wocRes.ok) throw new Error(`BSV WOC HTTP ${wocRes.status}`);
+  const woc = await wocRes.json(); // { size, count }
+
+  return { standardFee, dataFee, mempool: woc };
+}
+
+// ======= CALCULATIONS =======
+
+function calcBtcSimpleFeeSats(fees) {
+  requireKey(fees, BTC_TIER, `BTC_TIER='${BTC_TIER}' not in fees response`);
+  const satPerVb = safeNum(fees[BTC_TIER], 'btc feerate');
+  return Math.round(satPerVb * BTC_SIMPLE_VBYTES); // sats
+}
+
+function calcBtcEtaMinutes() {
+  const blocks = BTC_TIER_TO_BLOCKS[BTC_TIER] ?? 6;
+  return blocks * 10; // ~10 min/block
+}
+
+function calcBtcOneKbSats(fees) {
+  const satPerVb = safeNum(fees[BTC_TIER], 'btc feerate');
+  return Math.round(satPerVb * ONE_KB);
+}
+
+function calcBsvSimpleFeeSats(standardFee) {
+  // standardFee.miningFee = { satoshis, bytes }
+  const satPerByte = safeNum(standardFee?.miningFee?.satoshis, 'bsv miningFee.satoshis')
+                   / safeNum(standardFee?.miningFee?.bytes, 'bsv miningFee.bytes');
+  return Math.max(1, Math.round(satPerByte * BSV_SIMPLE_BYTES));
+}
+
+function calcBsvOneKbSats(dataFee) {
+  const satPerByte = safeNum(dataFee?.miningFee?.satoshis, 'bsv dataFee.satoshis')
+                   / safeNum(dataFee?.miningFee?.bytes, 'bsv dataFee.bytes');
+  return Math.max(1, Math.round(satPerByte * ONE_KB));
+}
+
+function calcBsvEtaMinutes(mempool) {
+  const blocks = BSV_MEMPOOL_TO_BLOCKS(Number(mempool?.count ?? 0));
+  return blocks * 10;
+}
+
+// ======= TWEET BUILDER =======
+
+function buildTweet({
+  btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
+  bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
+}) {
+  // 3-line human-friendly format + link
+  const line1 = `BTC fee:${btcFeeSats}s ~${btcEtaMin}m | BSV fee:${bsvFeeSats}s ~${bsvEtaMin}m`;
+  const line2 = `1KB data — BTC:${btc1kbSats}s | BSV:${bsv1kbSats}s`;
+  const line3 = `Backlog — BTC:${abbr(btcBacklogCount)}tx(~${btcBacklogBlocks}b) | BSV:${abbr(bsvBacklogCount)}tx(~${bsvBacklogBlocks}b)`;
+  const more = EXPLAINER_URL ? `\nMore: ${EXPLAINER_URL}` : '';
+
+  const text = `${line1}\n${line2}\n${line3}${more}`;
+  console.log(`Tweet length: ${text.length}`);
+  return clamp280(text);
+}
+
+// ======= MAIN =======
+
+async function main() {
+  // Env checks for OAuth 1.0a keys
+  const reqEnv = ['X_APP_KEY', 'X_APP_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'];
+  for (const k of reqEnv) if (!process.env[k]) throw new Error(`Missing env: ${k}`);
+
+  // Fetch
+  const [{ fees: btcFees, mempool: btcMp }, { standardFee, dataFee, mempool: bsvMp }] = await Promise.all([
+    fetchBtcFeesAndMempool(),
+    fetchBsvFeeQuoteAndMempool()
+  ]);
+
+  // Compute BTC
+  const btcFeeSats  = calcBtcSimpleFeeSats(btcFees);
+  const btcEtaMin   = calcBtcEtaMinutes();
+  const btc1kbSats  = calcBtcOneKbSats(btcFees);
+  // Approx backlog in "blocks": mempool vsize / 1,000,000 vB per block (4M weight units → 1M vB)
+  const btcBacklogBlocks = Math.max(0, Math.round((safeNum(btcMp?.vsize || 0, 'btc mempool vsize') / 1_000_000) * 10) / 10); // 1 decimal
+  const btcBacklogCount  = safeNum(btcMp?.count || 0, 'btc mempool count');
+
+  // Compute BSV
+  const bsvFeeSats  = calcBsvSimpleFeeSats(standardFee);
+  const bsvEtaMin   = calcBsvEtaMinutes(bsvMp);
+  const bsv1kbSats  = calcBsvOneKbSats(dataFee);
+  // BSV backlog "blocks": very rough; mirror ETA buckets
+  const bsvBacklogBlocks = Math.max(1, bsvEtaMin / 10);
+  const bsvBacklogCount  = safeNum(bsvMp?.count || 0, 'bsv mempool count');
+
+  const text = buildTweet({
+    btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
+    bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
+  });
+
+  // Post (OAuth 1.0a user context — posts as the account that owns the tokens)
+  const client = new TwitterApi({
+    appKey: process.env.X_APP_KEY,
+    appSecret: process.env.X_APP_SECRET,
+    accessToken: process.env.X_ACCESS_TOKEN,
+    accessSecret: process.env.X_ACCESS_SECRET,
+  });
+
+  // Auth preflight: who are we posting as?
+  const me = await client.v2.me().catch(e => {
+    throw new Error(`Auth check failed: ${e?.data?.title || e?.message || e}`);
+  });
+  console.log(`Authenticated as @${me?.data?.username} (id ${me?.data?.id})`);
+
+  // Post and print URL
+  const res = await client.v2.tweet(text);
+  const tweetId = res?.data?.id;
+  if (!tweetId) throw new Error(`X API returned no tweet id: ${JSON.stringify(res)}`);
+  const url = `https://x.com/${me?.data?.username}/status/${tweetId}`;
+  console.log('Tweet posted:', url);
+}
+
+main().catch(async (e) => {
+  console.error('Fatal error:', e?.message || e);
+  // Optional: backoff retry once if a transient network error
+  try {
+    await sleep(2000);
+    await main();
+  } catch (e2) {
+    console.error('Retry failed:', e2?.message || e2);
+    process.exit(1);
+  }
+});

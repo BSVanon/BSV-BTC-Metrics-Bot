@@ -1,0 +1,36 @@
+name: X Auth Check
+on: { workflow_dispatch: {} }
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: |
+          node -e "
+            import { TwitterApi } from 'twitter-api-v2';
+            const c=new TwitterApi({
+              appKey: process.env.X_APP_KEY,
+              appSecret: process.env.X_APP_SECRET,
+              accessToken: process.env.X_ACCESS_TOKEN,
+              accessSecret: process.env.X_ACCESS_SECRET,
+            });
+            (async()=>{
+              try {
+                const me=await c.v2.me();
+                console.log('OK as @'+me.data.username+' ('+me.data.id+')');
+                const r=await c.v2.tweet('Auth check '+Date.now());
+                console.log('Posted test:', 'https://x.com/'+me.data.username+'/status/'+r.data.id);
+              } catch(e){
+                console.error('FAIL:', e?.data?.title || e?.data?.detail || e?.message || e);
+                process.exit(1);
+              }
+            })();
+          "
+        env:
+          X_APP_KEY: ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}

@@ -1,6 +1,16 @@
-// post-metrics.js
 // ---- BOOT BANNER (prints even if require fails) ----
 console.log("[metrics-bot] starting post-metrics.js");
+console.log("[metrics-bot] node=%s cwd=%s", process.version, process.cwd());
+
+// Extra crash visibility
+process.on('unhandledRejection', (e) => {
+  console.error("[metrics-bot] UnhandledRejection:", e && e.stack || e);
+  process.exit(1);
+});
+process.on('uncaughtException', (e) => {
+  console.error("[metrics-bot] UncaughtException:", e && e.stack || e);
+  process.exit(1);
+});
 
 // Use CommonJS so it runs whether or not package.json has "type":"module"
 let TwitterApi;
@@ -8,7 +18,7 @@ try {
   ({ TwitterApi } = require('twitter-api-v2'));
   console.log("[metrics-bot] twitter-api-v2 loaded");
 } catch (e) {
-  console.error("[metrics-bot] require('twitter-api-v2') failed:", (e && e.message) || e);
+  console.error("[metrics-bot] require('twitter-api-v2') failed:", e && e.message || e);
   process.exit(1);
 }
 
@@ -23,9 +33,9 @@ const BTC_SIMPLE_VBYTES = 140;
 const BSV_SIMPLE_BYTES  = 226;
 const ONE_KB = 1000;
 
-const BTC_TIER = process.env.BTC_TIER || 'hourFee';
+const BTC_TIER = (process.env.BTC_TIER || 'hourFee').trim();
 const BTC_TIER_TO_BLOCKS = { fastestFee:1, halfHourFee:3, hourFee:6, economyFee:12, minimumFee:18 };
-const EXPLAINER_URL = process.env.EXPLAINER_URL || "";
+const EXPLAINER_URL = (process.env.EXPLAINER_URL || "").trim();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const abbr = n => (n==null) ? '' :
@@ -110,21 +120,31 @@ function buildTweet(o){
 
 // ======= MAIN =======
 async function main() {
+  console.log("[metrics-bot] env flags: DRY_RUN=%s BTC_TIER=%s EXPLAINER_URL=%s", process.env.DRY_RUN || '', BTC_TIER, EXPLAINER_URL || '(none)');
+
   console.log("[metrics-bot] checking secrets…");
   const hasSecrets = !!process.env.X_APP_KEY && !!process.env.X_APP_SECRET && !!process.env.X_ACCESS_TOKEN && !!process.env.X_ACCESS_SECRET;
-  if (!hasSecrets) throw new Error("X secrets missing in environment");
+  if (!hasSecrets && process.env.DRY_RUN !== '1') {
+    throw new Error("X secrets missing in environment (set DRY_RUN=1 to test without posting)");
+  }
 
-  console.log("[metrics-bot] auth to X…");
-  const client = new TwitterApi({
-    appKey: process.env.X_APP_KEY,
-    appSecret: process.env.X_APP_SECRET,
-    accessToken: process.env.X_ACCESS_TOKEN,
-    accessSecret: process.env.X_ACCESS_SECRET,
-  });
+  let client = null;
+  let handle = 'dryrun';
+  if (process.env.DRY_RUN !== '1') {
+    console.log("[metrics-bot] auth to X…");
+    client = new TwitterApi({
+      appKey: process.env.X_APP_KEY,
+      appSecret: process.env.X_APP_SECRET,
+      accessToken: process.env.X_ACCESS_TOKEN,
+      accessSecret: process.env.X_ACCESS_SECRET,
+    });
 
-  const me = await client.v2.me();
-  const handle = me?.data?.username || 'unknown';
-  console.log(`[metrics-bot] Auth OK as @${handle}`);
+    const me = await client.v2.me();
+    handle = me?.data?.username || 'unknown';
+    console.log(`[metrics-bot] Auth OK as @${handle}`);
+  } else {
+    console.log("[metrics-bot] DRY_RUN: skipping X auth");
+  }
 
   const [btc, bsv] = await Promise.all([fetchBtc(), fetchBsv()]);
 
@@ -156,14 +176,16 @@ async function main() {
 (async function run(){
   try {
     await main();
+    console.log("[metrics-bot] done ok");
   } catch (e) {
-    console.error("[metrics-bot] Fatal:", (e && e.message) || e);
+    console.error("[metrics-bot] Fatal:", e && e.stack || e);
     try {
       console.error("[metrics-bot] Retrying after 2s…");
       await sleep(2000);
       await main();
+      console.log("[metrics-bot] done ok after retry");
     } catch (e2) {
-      console.error("[metrics-bot] Retry failed:", (e2 && e2.message) || e2);
+      console.error("[metrics-bot] Retry failed:", e2 && e2.stack || e2);
       process.exit(1);
     }
   }

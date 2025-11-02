@@ -2,6 +2,8 @@
   "name": "bsv-btc-metrics-bot",
   "version": "1.0.0",
   "private": true,
+  "description": "Posts BTC vs BSV fee and mempool metrics to X (Twitter).",
+  "license": "MIT",
   "scripts": {
     "post": "node post-metrics.js",
     "post:dry": "DRY_RUN=1 node post-metrics.js"

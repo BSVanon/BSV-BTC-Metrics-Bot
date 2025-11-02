@@ -1,0 +1,57 @@
+# .github/workflows/post.yml
+name: Post
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 */8 * * *"  # every 8 hours
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run actions/checkout@v4
+        uses: actions/checkout@v4
+
+      - name: Run actions/setup-node@v4
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Post metrics (debug + run)
+        shell: bash
+        env:
+          X_APP_KEY: ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
+          BTC_TIER: ${{ vars.BTC_TIER }}
+          # Set to "1" to print-only without posting
+          DRY_RUN: ${{ vars.DRY_RUN }}
+        run: |
+          set -euo pipefail
+          echo "PWD: $(pwd)"
+          echo "Node: $(node -v)"
+          echo "Repo root listing:"
+          ls -la
+          echo "---- post-metrics.js existence + checksum ----"
+          if [[ -f post-metrics.js ]]; then
+            wc -c post-metrics.js
+            (sha256sum post-metrics.js || shasum -a 256 post-metrics.js) 2>/dev/null || true
+            echo "---- first 40 lines ----"
+            sed -n '1,40p' post-metrics.js
+          else
+            echo "post-metrics.js NOT FOUND in repo root"
+            find . -maxdepth 2 -type f | sort | sed -n '1,120p'
+          fi
+          echo "---- SMOKE stdout ----"
+          node -e 'console.log("[smoke] hello @", new Date().toISOString())'
+          echo "---- RUN SCRIPT ----"
+          node post-metrics.js

@@ -1,8 +1,10 @@
 {
   "name": "bsv-btc-metrics-bot",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
-    "post": "node post-metrics.js"
+    "post": "node post-metrics.js",
+    "post:dry": "DRY_RUN=1 node post-metrics.js"
   },
   "dependencies": {
     "twitter-api-v2": "^1.17.0"

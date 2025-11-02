@@ -25,7 +25,6 @@ const BTC_TIER_TO_BLOCKS = {
 };
 
 // For BSV ETA, use a simple backlog heuristic
-// If mempool tx count is small, assume 1 block; increase if it grows.
 const BSV_MEMPOOL_TO_BLOCKS = (txCount) => {
   const n = Number(txCount || 0);
   if (n <= 20000) return 1;
@@ -41,7 +40,6 @@ const EXPLAINER_URL = process.env.EXPLAINER_URL || "";
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 function abbr(n) {
-  // Abbreviate large integers: 1234 -> 1.2k, 1_230_000 -> 1.2M
   if (n === null || n === undefined) return '';
   const abs = Math.abs(n);
   if (abs < 1000) return String(n);
@@ -159,7 +157,6 @@ function buildTweet({
   btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
   bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
 }) {
-  // 3-line human-friendly format + link
   const line1 = `BTC fee:${btcFeeSats}s ~${btcEtaMin}m | BSV fee:${bsvFeeSats}s ~${bsvEtaMin}m`;
   const line2 = `1KB data — BTC:${btc1kbSats}s | BSV:${bsv1kbSats}s`;
   const line3 = `Backlog — BTC:${abbr(btcBacklogCount)}tx(~${btcBacklogBlocks}b) | BSV:${abbr(bsvBacklogCount)}tx(~${bsvBacklogBlocks}b)`;
@@ -177,34 +174,7 @@ async function main() {
   const reqEnv = ['X_APP_KEY', 'X_APP_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'];
   for (const k of reqEnv) if (!process.env[k]) throw new Error(`Missing env: ${k}`);
 
-  // Fetch
-  const [{ fees: btcFees, mempool: btcMp }, { standardFee, dataFee, mempool: bsvMp }] = await Promise.all([
-    fetchBtcFeesAndMempool(),
-    fetchBsvFeeQuoteAndMempool()
-  ]);
-
-  // Compute BTC
-  const btcFeeSats  = calcBtcSimpleFeeSats(btcFees);
-  const btcEtaMin   = calcBtcEtaMinutes();
-  const btc1kbSats  = calcBtcOneKbSats(btcFees);
-  // Approx backlog in "blocks": mempool vsize / 1,000,000 vB per block (4M weight units → 1M vB)
-  const btcBacklogBlocks = Math.max(0, Math.round((safeNum(btcMp?.vsize || 0, 'btc mempool vsize') / 1_000_000) * 10) / 10); // 1 decimal
-  const btcBacklogCount  = safeNum(btcMp?.count || 0, 'btc mempool count');
-
-  // Compute BSV
-  const bsvFeeSats  = calcBsvSimpleFeeSats(standardFee);
-  const bsvEtaMin   = calcBsvEtaMinutes(bsvMp);
-  const bsv1kbSats  = calcBsvOneKbSats(dataFee);
-  // BSV backlog "blocks": very rough; mirror ETA buckets
-  const bsvBacklogBlocks = Math.max(1, bsvEtaMin / 10);
-  const bsvBacklogCount  = safeNum(bsvMp?.count || 0, 'bsv mempool count');
-
-  const text = buildTweet({
-    btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
-    bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
-  });
-
-  // Post (OAuth 1.0a user context — posts as the account that owns the tokens)
+  // Prepare X client
   const client = new TwitterApi({
     appKey: process.env.X_APP_KEY,
     appSecret: process.env.X_APP_SECRET,
@@ -214,12 +184,45 @@ async function main() {
 
   // Auth preflight: who are we posting as?
   const me = await client.v2.me().catch(e => {
-    throw new Error(`Auth check failed: ${e?.data?.title || e?.message || e}`);
+    const detail = e?.data?.title || e?.data?.detail || e?.message || String(e);
+    throw new Error(`Auth check failed: ${detail}`);
   });
   console.log(`Authenticated as @${me?.data?.username} (id ${me?.data?.id})`);
 
+  // Fetch data in parallel
+  const [{ fees: btcFees, mempool: btcMp }, { standardFee, dataFee, mempool: bsvMp }] = await Promise.all([
+    fetchBtcFeesAndMempool(),
+    fetchBsvFeeQuoteAndMempool()
+  ]);
+
+  // Compute BTC
+  const btcFeeSats  = calcBtcSimpleFeeSats(btcFees);
+  const btcEtaMin   = calcBtcEtaMinutes();
+  const btc1kbSats  = calcBtcOneKbSats(btcFees);
+  const btcBacklogBlocks = Math.max(0, Math.round((safeNum(btcMp?.vsize || 0, 'btc mempool vsize') / 1_000_000) * 10) / 10);
+  const btcBacklogCount  = safeNum(btcMp?.count || 0, 'btc mempool count');
+
+  // Compute BSV
+  const bsvFeeSats  = calcBsvSimpleFeeSats(standardFee);
+  const bsvEtaMin   = calcBsvEtaMinutes(bsvMp);
+  const bsv1kbSats  = calcBsvOneKbSats(dataFee);
+  const bsvBacklogBlocks = Math.max(1, bsvEtaMin / 10);
+  const bsvBacklogCount  = safeNum(bsvMp?.count || 0, 'bsv mempool count');
+
+  const text = buildTweet({
+    btcFeeSats, btcEtaMin, btc1kbSats, btcBacklogCount, btcBacklogBlocks,
+    bsvFeeSats, bsvEtaMin, bsv1kbSats, bsvBacklogCount, bsvBacklogBlocks
+  });
+
   // Post and print URL
-  const res = await client.v2.tweet(text);
+  let res;
+  try {
+    res = await client.v2.tweet(text);
+  } catch (e) {
+    const title = e?.data?.title || e?.message || 'Unknown X error';
+    const detail = e?.data?.detail || '';
+    throw new Error(`Tweet failed: ${title}${detail ? ` — ${detail}` : ''}`);
+  }
   const tweetId = res?.data?.id;
   if (!tweetId) throw new Error(`X API returned no tweet id: ${JSON.stringify(res)}`);
   const url = `https://x.com/${me?.data?.username}/status/${tweetId}`;
@@ -228,7 +231,6 @@ async function main() {
 
 main().catch(async (e) => {
   console.error('Fatal error:', e?.message || e);
-  // Optional: backoff retry once if a transient network error
   try {
     await sleep(2000);
     await main();

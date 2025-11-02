@@ -1,27 +1,29 @@
-name: post
+name: Post metrics
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      DRY_RUN:
+        description: "Set to 1 to run without tweeting"
+        required: false
+        default: "1"
   schedule:
-    - cron: "0 */8 * * *" # every 8 hours
+    - cron: "0 */8 * * *"  # every 8 hours UTC
+
+env:
+  # Defaults (can be overridden with Repository Variables)
+  BTC_TIER: hourFee
+  EXPLAINER_URL: ""
 
 jobs:
   post:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+      statuses: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Echo context + list files
-        run: |
-          set -euxo pipefail
-          pwd
-          node -v
-          npm -v
-          ls -la
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -29,32 +31,16 @@ jobs:
           node-version: 20
 
       - name: Install
-        run: npm ci
+        run: npm ci --omit=dev
 
-      - name: Preflight (prove file + env)
-        env:
-          DRY_RUN: "1"
-          BTC_TIER: ${{ vars.BTC_TIER }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-        run: npm run preflight
-
-      # PRs: never post to X
-      - name: Post metrics (dry-run on PRs)
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          DRY_RUN: "1"
-          BTC_TIER: ${{ vars.BTC_TIER }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-        run: npm run post
-
-      # Main default: real post
       - name: Post metrics
-        if: ${{ github.event_name != 'pull_request' }}
         env:
           X_APP_KEY: ${{ secrets.X_APP_KEY }}
           X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          BTC_TIER: ${{ vars.BTC_TIER }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-        run: npm run post
+          # Prefer manual input; fall back to repo vars; then to defaults in env above
+          DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
+          BTC_TIER: ${{ vars.BTC_TIER || env.BTC_TIER }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL || env.EXPLAINER_URL }}
+        run: node post-metrics.js

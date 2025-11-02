@@ -14,6 +14,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Echo context + list files
+        run: |
+          set -euxo pipefail
+          pwd
+          node -v
+          npm -v
+          ls -la
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -22,16 +31,23 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Preflight (prove file + env)
+        env:
+          DRY_RUN: "1"
+          BTC_TIER: ${{ vars.BTC_TIER }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
+        run: npm run preflight
+
+      # PRs: never post to X
       - name: Post metrics (dry-run on PRs)
         if: ${{ github.event_name == 'pull_request' }}
         env:
           DRY_RUN: "1"
           BTC_TIER: ${{ vars.BTC_TIER }}
           EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-        run: |
-          set -euxo pipefail
-          node post-metrics.js
+        run: npm run post
 
+      # Main default: real post
       - name: Post metrics
         if: ${{ github.event_name != 'pull_request' }}
         env:
@@ -41,6 +57,4 @@ jobs:
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
           BTC_TIER: ${{ vars.BTC_TIER }}
           EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-        run: |
-          set -euxo pipefail
-          node post-metrics.js
+        run: npm run post

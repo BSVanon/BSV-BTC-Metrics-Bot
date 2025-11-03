@@ -29,8 +29,8 @@ if (typeof fetch !== 'function') {
 }
 
 // ======= CONFIG =======
-const BTC_SIMPLE_VBYTES = 140;
-const BSV_SIMPLE_BYTES  = 226;
+const BTC_SIMPLE_VBYTES = 140;  // rough simple tx size on BTC in vbytes
+const BSV_SIMPLE_BYTES  = 226;  // rough simple tx size on BSV in bytes
 const ONE_KB = 1000;
 
 const BTC_TIER = (process.env.BTC_TIER || 'hourFee').trim();
@@ -38,11 +38,14 @@ const BTC_TIER_TO_BLOCKS = { fastestFee:1, halfHourFee:3, hourFee:6, economyFee:
 const EXPLAINER_URL = (process.env.EXPLAINER_URL || "").trim();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const abbr = n => (n==null) ? '' :
-  Math.abs(n) < 1e3 ? String(n) :
-  Math.abs(n) < 1e6 ? (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K' :
-  Math.abs(n) < 1e9 ? (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M' :
-                      (n/1e9).toFixed(1).replace(/\.0$/,'') + 'B';
+const abbr = (n) => {
+  if (n == null) return '';
+  const a = Math.abs(n);
+  if (a < 1e3) return String(n);
+  if (a < 1e6) return (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K';
+  if (a < 1e9) return (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+  return (n/1e9).toFixed(1).replace(/\.0$/,'') + 'B';
+};
 const clamp280 = t => t.length<=280? t : (t.slice(0,277)+'...');
 const reqKey = (o,k,h) => { if(!o || !(k in o)) throw new Error(`Missing key ${k}${h?` (${h})`:''}`); return o[k]; };
 
@@ -52,8 +55,6 @@ const BSV_MEMPOOL_TO_BLOCKS = (txCount) => {
   if (n <= 100000) return 2;
   return 3;
 };
-
-const blkLabel = (n) => (Number(n) === 1 ? 'blk' : 'blks');
 
 // ======= FETCHERS =======
 async function fetchBtc() {
@@ -99,6 +100,7 @@ async function fetchBsv() {
 
 // ======= MATH =======
 const btcFeeSats = (fees) => Math.round(Number(fees[BTC_TIER]) * BTC_SIMPLE_VBYTES);
+const btcEtaMin  = () => (BTC_TIER_TO_BLOCKS[BTC_TIER] ?? 6) * 10;
 const btc1kbSats = (fees) => Math.round(Number(fees[BTC_TIER]) * ONE_KB);
 
 const bsvSimpleSats = (standardFee) => {
@@ -109,15 +111,21 @@ const bsv1kbSats = (dataFee) => {
   const spp = Number(dataFee.miningFee.satoshis) / Number(dataFee.miningFee.bytes);
   return Math.max(1, Math.round(spp * ONE_KB));
 };
+const bsvEtaMin = (mp) => BSV_MEMPOOL_TO_BLOCKS(Number(mp.count||0)) * 10;
 
+// ======= TWEET BUILDER =======
+// Your preferences:
+// - Put BSV first
+// - Say “Tx fee” instead of “BSV/BTC fee”
+// - Remove ETA minutes entirely
+// - Uppercase K for thousands
+// - Use "~" before blk counts
 function buildTweet(o){
-  const l1 = `BSV fee   : ${o.bsvFee}sats`;
-  const l2 = `BTC fee   : ${o.btcFee}sats`;
-  const l3 = `1KB data  : BSV ${o.bsv1k}sats | BTC ${o.btc1k}sats`;
-  const l4 = `Backlog   : BSV ${abbr(o.bsvCnt)} tx (~${o.bsvBlks} ${blkLabel(o.bsvBlks)}) | BTC ${abbr(o.btcCnt)} tx (~${o.btcBlks} ${blkLabel(o.btcBlks)})`;
-  const l5 = EXPLAINER_URL ? `EXPLAINER : ${EXPLAINER_URL}` : '';
-  const text = [l1, l2, l3, l4, l5].filter(Boolean).join('\n');
-  return clamp280(text);
+  const line1 = `Tx fee    : BSV ${o.bsvFee} sats | BTC ${o.btcFee} sats`;
+  const line2 = `1KB data  : BSV ${o.bsv1k} sats | BTC ${o.btc1k} sats`;
+  const line3 = `Backlog   : BSV ${abbr(o.bsvCnt)} tx (~${o.bsvBlks} blk) | BTC ${abbr(o.btcCnt)} tx (~${o.btcBlks} blk)`;
+  const line4 = EXPLAINER_URL ? `EXPLAINER : ${EXPLAINER_URL}` : '';
+  return clamp280([line1, line2, line3, line4].filter(Boolean).join('\n'));
 }
 
 // ======= MAIN =======
@@ -157,7 +165,7 @@ async function main() {
 
   const bsvFee  = bsvSimpleSats(bsv.standardFee);
   const bsv1k   = bsv1kbSats(bsv.dataFee);
-  const bsvBlks = BSV_MEMPOOL_TO_BLOCKS(bsv.mempool.count);
+  const bsvBlks = Math.max(1, bsvEtaMin(bsv.mempool)/10);
   const bsvCnt  = Number(bsv.mempool.count||0);
 
   const text = buildTweet({ btcFee, btc1k, btcCnt, btcBlks, bsvFee, bsv1k, bsvCnt, bsvBlks });

@@ -1,23 +1,10 @@
-name: Post metrics (every 8h + manual preview)
+name: Post metrics (every 8h)
 
 on:
   schedule:
-    # Every 8 hours at :00 UTC
+    # Every 8 hours at :00 UTC — 00:00, 08:00, 16:00
     - cron: "0 */8 * * *"
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Set to '1' to preview only (no post). '0' to post now."
-        required: false
-        default: "1"
-      btc_tier:
-        description: "BTC fee tier: fastestFee | halfHourFee | hourFee | economyFee | minimumFee"
-        required: false
-        default: "hourFee"
-      explainer_url:
-        description: "Override explainer URL (optional)"
-        required: false
-        default: ""
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -30,16 +17,18 @@ jobs:
   post:
     runs-on: ubuntu-latest
     env:
-      # --- X (Twitter) API secrets (needed only when actually posting) ---
-      X_APP_KEY:        ${{ secrets.X_APP_KEY }}
-      X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
-      X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
+      # X (Twitter) API secrets — required to post
+      X_APP_KEY:       ${{ secrets.X_APP_KEY }}
+      X_APP_SECRET:    ${{ secrets.X_APP_SECRET }}
+      X_ACCESS_TOKEN:  ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
 
-      # --- Inputs/Vars with sensible fallbacks ---
-      BTC_TIER:        ${{ github.event_name == 'workflow_dispatch' && inputs.btc_tier || vars.BTC_TIER || 'hourFee' }}
-      EXPLAINER_URL:   ${{ github.event_name == 'workflow_dispatch' && inputs.explainer_url || vars.EXPLAINER_URL || '' }}
-      DRY_RUN:         ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
+      # Vars (configure under Actions → Variables)
+      BTC_TIER:       ${{ vars.BTC_TIER || 'hourFee' }}
+      EXPLAINER_URL:  ${{ vars.EXPLAINER_URL || '' }}
+
+      # Must be empty here so we actually post
+      DRY_RUN:        ""
 
     steps:
       - name: Checkout
@@ -53,17 +42,5 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      # Always preview first (never posts). Shows final tweet text in logs.
-      - name: Preview tweet (never posts)
-        run: node post-metrics.js
-        env:
-          DRY_RUN: "1"             # force preview
-          # clear secrets so preview cannot post even if code changes
-          X_APP_KEY: ""
-          X_APP_SECRET: ""
-          X_ACCESS_TOKEN: ""
-          X_ACCESS_SECRET: ""
-
-      # Actual post (respects DRY_RUN from env)
-      - name: Post metrics (honors DRY_RUN)
+      - name: Post metrics
         run: node post-metrics.js

@@ -121,6 +121,12 @@ function buildTweet(o){
 // ======= MAIN =======
 async function main() {
   console.log("[metrics-bot] env flags: DRY_RUN=%s BTC_TIER=%s EXPLAINER_URL=%s", process.env.DRY_RUN || '', BTC_TIER, EXPLAINER_URL || '(none)');
+  console.log("[metrics-bot] secret presence:", {
+    appKey: !!process.env.X_APP_KEY,
+    appSecret: !!process.env.X_APP_SECRET,
+    accessToken: !!process.env.X_ACCESS_TOKEN,
+    accessSecret: !!process.env.X_ACCESS_SECRET
+  });
 
   console.log("[metrics-bot] checking secrets…");
   const hasSecrets = !!process.env.X_APP_KEY && !!process.env.X_APP_SECRET && !!process.env.X_ACCESS_TOKEN && !!process.env.X_ACCESS_SECRET;

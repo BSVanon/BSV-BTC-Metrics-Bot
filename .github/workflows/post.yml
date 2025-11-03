@@ -1,50 +1,69 @@
-name: Post BSV/BTC Metrics
+name: Post metrics (every 8h + manual preview)
 
 on:
   schedule:
-    # Every 8 hours at :00 UTC → 00:00, 08:00, 16:00 UTC
+    # Every 8 hours at :00 UTC
     - cron: "0 */8 * * *"
-  workflow_dispatch: {}   # ← enables the green "Run workflow" button
-  push:
-    branches: [ main ]    # ← any commit to main will run new code
-    paths:
-      - ".github/workflows/post.yml"
-      - "post-metrics.js"
-      - "preflight.js"
-      - "package.json"
-      - "package-lock.json"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Set to '1' to preview only (no post). '0' to post now."
+        required: false
+        default: "1"
+      btc_tier:
+        description: "BTC fee tier: fastestFee | halfHourFee | hourFee | economyFee | minimumFee"
+        required: false
+        default: "hourFee"
+      explainer_url:
+        description: "Override explainer URL (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-metrics-bot
+  cancel-in-progress: true
 
 jobs:
   post:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    env:
+      # --- X (Twitter) API secrets (needed only when actually posting) ---
+      X_APP_KEY:        ${{ secrets.X_APP_KEY }}
+      X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
+      X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
+
+      # --- Inputs/Vars with sensible fallbacks ---
+      BTC_TIER:        ${{ github.event_name == 'workflow_dispatch' && inputs.btc_tier || vars.BTC_TIER || 'hourFee' }}
+      EXPLAINER_URL:   ${{ github.event_name == 'workflow_dispatch' && inputs.explainer_url || vars.EXPLAINER_URL || '' }}
+      DRY_RUN:         ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Setup Node
+      - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: npm ci
+      - name: Install deps
         run: npm ci
 
-      - name: Preflight (prints loudly)
-        run: node preflight.js
-        env:
-          DRY_RUN: ${{ vars.DRY_RUN || '1' }}
-          BTC_TIER: ${{ vars.BTC_TIER || 'hourFee' }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-
-      - name: Post metrics
+      # Always preview first (never posts). Shows final tweet text in logs.
+      - name: Preview tweet (never posts)
         run: node post-metrics.js
         env:
-          X_APP_KEY: ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-          BTC_TIER: ${{ vars.BTC_TIER || 'hourFee' }}
-          DRY_RUN: ${{ vars.DRY_RUN || '1' }}
+          DRY_RUN: "1"             # force preview
+          # clear secrets so preview cannot post even if code changes
+          X_APP_KEY: ""
+          X_APP_SECRET: ""
+          X_ACCESS_TOKEN: ""
+          X_ACCESS_SECRET: ""
+
+      # Actual post (respects DRY_RUN from env)
+      - name: Post metrics (honors DRY_RUN)
+        run: node post-metrics.js

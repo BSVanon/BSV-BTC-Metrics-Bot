@@ -1,82 +1,44 @@
-name: DEBUG — run bot now (with proofs)
-
+name: DEBUG — Run bot now
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Set to 0 to actually tweet"
+        description: "Set to 1 to skip posting; 0 to post"
         required: true
         default: "1"
-        type: choice
-        options: ["1","0"]
+      btc_tier:
+        description: "BTC fee tier (fastestFee|halfHourFee|hourFee|economyFee|minumumFee)"
+        required: false
+        default: "hourFee"
+      explainer_url:
+        description: "Optional: link to more info"
+        required: false
+        default: ""
 
 jobs:
-  debug:
+  run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show commit + tree
-        run: |
-          echo "HEAD COMMIT:"
-          git log -1 --pretty=fuller
-          echo
-          echo "TOP-LEVEL FILES:"
-          ls -la
-          echo
-          echo "package.json (first lines):"
-          sed -n '1,40p' package.json || true
-          echo
-          echo "post-metrics.js (first 60 lines):"
-          sed -n '1,60p' post-metrics.js || true
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
       - run: npm ci
 
-      - name: Preflight (prints loudly)
-        run: node preflight.js
+      - name: Preflight
+        run: npm run preflight
         env:
           DRY_RUN:       ${{ inputs.dry_run }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:      ${{ vars.BTC_TIER }}
+          BTC_TIER:      ${{ inputs.btc_tier }}
+          EXPLAINER_URL: ${{ inputs.explainer_url }}
 
-      - name: OAuth1 auth smoke test (prints exact API error if any)
-        env:
-          X_APP_KEY:       ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET:    ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN:  ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-        run: |
-          node - <<'NODE'
-          const { TwitterApi } = require('twitter-api-v2');
-          (async () => {
-            try {
-              const c = new TwitterApi({
-                appKey: process.env.X_APP_KEY,
-                appSecret: process.env.X_APP_SECRET,
-                accessToken: process.env.X_ACCESS_TOKEN,
-                accessSecret: process.env.X_ACCESS_SECRET,
-              });
-              const me = await c.v2.me();
-              console.log('Auth OK as @'+me.data.username+' ('+me.data.id+')');
-            } catch (e) {
-              const msg = e?.data?.title || e?.data?.detail || e?.message || String(e);
-              console.error('AUTH FAIL:', msg);
-              process.exit(1);
-            }
-          })();
-          NODE
-
-      - name: Run bot (respects dry_run input)
-        env:
-          X_APP_KEY:       ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET:    ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN:  ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          EXPLAINER_URL:   ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:        ${{ vars.BTC_TIER }}
-          DRY_RUN:         ${{ inputs.dry_run }}
+      - name: Post metrics
         run: node post-metrics.js
+        env:
+          X_APP_KEY:       ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET:    ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN:  ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          DRY_RUN:         ${{ inputs.dry_run }}
+          BTC_TIER:        ${{ inputs.btc_tier }}
+          EXPLAINER_URL:   ${{ inputs.explainer_url }}

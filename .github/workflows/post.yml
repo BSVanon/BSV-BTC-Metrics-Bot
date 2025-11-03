@@ -1,25 +1,46 @@
-name: Post BTC/BSV Metrics
+name: Post BTCBSV Metrics
+
 on:
-  workflow_dispatch: {}
   schedule:
-    - cron: "0 */8 * * *"  # every 8h (UTC)
+    - cron: "0 */8 * * *"   # 00:00, 08:00, 16:00 UTC
+  # Uncomment to allow manual runs:
+  # workflow_dispatch: {}
+
 jobs:
   post:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     env:
-      DRY_RUN: ${{ vars.DRY_RUN || '1' }}
-      EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
-      BTC_TIER: ${{ vars.BTC_TIER || 'hourFee' }}
-      X_APP_KEY: ${{ secrets.X_APP_KEY }}
-      X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
-      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+      # X (Twitter) credentials from repo/org Secrets
+      X_APP_KEY:        ${{ secrets.X_APP_KEY }}
+      X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
+      X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
+
+      # Optional explainer link (Actions → Variables)
+      EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
+
+      # BTC fee tier to use (your script already supports this)
+      BTC_TIER:         ${{ vars.BTC_TIER || 'hourFee' }}
+
+      # Make it live by default. Set repo Variable DRY_RUN=1 to dry-run.
+      DRY_RUN:          ${{ vars.DRY_RUN || '0' }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm ci
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (ci)
+        run: npm ci
+
       - name: Preflight
         run: node preflight.js
+
       - name: Post metrics
         run: node post-metrics.js

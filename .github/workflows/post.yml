@@ -1,79 +1,58 @@
-name: Post metrics
+name: post
 
 on:
-  workflow_dispatch:
-    inputs:
-      DRY_RUN:
-        description: "Set to 1 to run without tweeting"
-        required: false
-        default: "1"
   schedule:
-    - cron: "0 */8 * * *"  # every 8 hours UTC
-
-env:
-  BTC_TIER: hourFee
-  EXPLAINER_URL: ""
+    - cron: "0 */8 * * *"   # every 8 hours
+  workflow_dispatch:
 
 jobs:
   post:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      statuses: write
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Run actions/checkout@v4
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Run actions/setup-node@v4
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install deps (prod only)
-        run: npm ci --omit=dev
-
-      # ---------- DEBUG STEPS (temporary; keep until it works) ----------
-      - name: Show workspace tree
+      - name: Verify repo contents
         run: |
-          echo "CWD=$(pwd)"
-          echo "==== ls -la ===="
-          ls -la
-          echo "==== find . (2 levels) ===="
-          find . -maxdepth 2 -type f -print
-
-      - name: Show package.json (first 120 lines)
-        run: |
-          if [ -f package.json ]; then
-            sed -n '1,120p' package.json
-          else
-            echo "package.json NOT FOUND at repo root!" && exit 1
-          fi
-
-      - name: Show post-metrics.js (first 120 lines)
-        run: |
+          echo "PWD=$(pwd)"
+          echo "TREE:"
+          find . -maxdepth 3 -type f -print | sort
+          echo
           if [ -f post-metrics.js ]; then
-            sed -n '1,120p' post-metrics.js
+            echo "SHA256 post-metrics.js:"
+            sha256sum post-metrics.js
             echo
-            echo "==== File length (lines) ===="
-            wc -l post-metrics.js
+            echo "HEAD post-metrics.js:"
+            sed -n '1,60p' post-metrics.js
+            echo
           else
-            echo "post-metrics.js NOT FOUND at repo root!" && exit 1
+            echo "post-metrics.js NOT FOUND at repo root"; exit 1
           fi
 
-      - name: Node probe
-        run: |
-          node -e "console.log('[probe] node', process.version, 'cwd', process.cwd())"
-          node -e "const fs=require('fs'); console.log('[probe] post-metrics.js exists?', fs.existsSync('post-metrics.js')); console.log('[probe] size', fs.existsSync('post-metrics.js')?fs.statSync('post-metrics.js').size:0)"
+      - name: Install deps
+        run: npm ci
 
-      # ---------- ACTUAL RUN ----------
-      - name: Post metrics
+      - name: Node env info
+        run: |
+          node -v
+          npm -v
+
+      - name: Post metrics (dry-run unless explicitly disabled)
         env:
-          X_APP_KEY: ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
-          BTC_TIER: ${{ vars.BTC_TIER || env.BTC_TIER }}
-          EXPLAINER_URL: ${{ vars.EXPLAINER_URL || env.EXPLAINER_URL }}
-        run: node post-metrics.js
+          X_APP_KEY:        ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
+          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
+          BTC_TIER:         ${{ vars.BTC_TIER }}
+          # default to DRY_RUN=1 unless you set a repo variable DRY_RUN=0
+          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
+        run: |
+          set -euo pipefail
+          node post-metrics.js

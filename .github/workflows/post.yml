@@ -11,7 +11,6 @@ on:
     - cron: "0 */8 * * *"  # every 8 hours UTC
 
 env:
-  # Defaults (can be overridden with Repository Variables)
   BTC_TIER: hourFee
   EXPLAINER_URL: ""
 
@@ -21,6 +20,7 @@ jobs:
     permissions:
       contents: read
       statuses: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,16 +30,49 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install
+      - name: Install deps (prod only)
         run: npm ci --omit=dev
 
+      # ---------- DEBUG STEPS (temporary; keep until it works) ----------
+      - name: Show workspace tree
+        run: |
+          echo "CWD=$(pwd)"
+          echo "==== ls -la ===="
+          ls -la
+          echo "==== find . (2 levels) ===="
+          find . -maxdepth 2 -type f -print
+
+      - name: Show package.json (first 120 lines)
+        run: |
+          if [ -f package.json ]; then
+            sed -n '1,120p' package.json
+          else
+            echo "package.json NOT FOUND at repo root!" && exit 1
+          fi
+
+      - name: Show post-metrics.js (first 120 lines)
+        run: |
+          if [ -f post-metrics.js ]; then
+            sed -n '1,120p' post-metrics.js
+            echo
+            echo "==== File length (lines) ===="
+            wc -l post-metrics.js
+          else
+            echo "post-metrics.js NOT FOUND at repo root!" && exit 1
+          fi
+
+      - name: Node probe
+        run: |
+          node -e "console.log('[probe] node', process.version, 'cwd', process.cwd())"
+          node -e "const fs=require('fs'); console.log('[probe] post-metrics.js exists?', fs.existsSync('post-metrics.js')); console.log('[probe] size', fs.existsSync('post-metrics.js')?fs.statSync('post-metrics.js').size:0)"
+
+      # ---------- ACTUAL RUN ----------
       - name: Post metrics
         env:
           X_APP_KEY: ${{ secrets.X_APP_KEY }}
           X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          # Prefer manual input; fall back to repo vars; then to defaults in env above
           DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
           BTC_TIER: ${{ vars.BTC_TIER || env.BTC_TIER }}
           EXPLAINER_URL: ${{ vars.EXPLAINER_URL || env.EXPLAINER_URL }}

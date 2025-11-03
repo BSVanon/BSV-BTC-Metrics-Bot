@@ -5,7 +5,6 @@
   "main": "post-metrics.js",
   "license": "MIT",
   "type": "commonjs",
-  "engines": { "node": ">=20" },
   "scripts": {
     "post": "node post-metrics.js",
     "preflight": "node preflight.js"

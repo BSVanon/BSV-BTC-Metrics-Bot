@@ -29,8 +29,8 @@ if (typeof fetch !== 'function') {
 }
 
 // ======= CONFIG =======
-const BTC_SIMPLE_VBYTES = 140;
-const BSV_SIMPLE_BYTES  = 226;
+const BTC_SIMPLE_VBYTES = 140;   // rough typical BTC tx size in vB
+const BSV_SIMPLE_BYTES  = 226;   // rough typical BSV tx size in bytes
 const ONE_KB = 1000;
 
 const BTC_TIER = (process.env.BTC_TIER || 'hourFee').trim();
@@ -110,12 +110,26 @@ const bsv1kbSats = (dataFee) => {
 };
 const bsvEtaMin = (mp) => BSV_MEMPOOL_TO_BLOCKS(Number(mp.count||0)) * 10;
 
+// ======= TWEET BUILDER (BSV-first, labeled units, aligned) =======
+function pluralBlk(n) {
+  const v = Number(n);
+  return `blk${v === 1 ? '' : 's'}`;
+}
+
 function buildTweet(o){
-  const line1 = `BTC fee:${o.btcFee}s ~${o.btcEta}m | BSV fee:${o.bsvFee}s ~${o.bsvEta}m`;
-  const line2 = `1KB data — BTC:${o.btc1k}s | BSV:${o.bsv1k}s`;
-  const line3 = `Backlog — BTC:${abbr(o.btcCnt)}tx(~${o.btcBlks}b) | BSV:${abbr(o.bsvCnt)}tx(~${o.bsvBlks}b)`;
-  const more = EXPLAINER_URL ? `\nMore: ${EXPLAINER_URL}` : '';
-  return clamp280(`${line1}\n${line2}\n${line3}${more}`);
+  // Labels are fixed-width to help visual alignment on X’s proportional font.
+  const L1 = `BSV fee   : ${o.bsvFee}sats (~${o.bsvEta} min)`;
+  const L2 = `BTC fee   : ${o.btcFee}sats (~${o.btcEta} min)`;
+  const L3 = `1KB data  : BSV ${o.bsv1k}sats | BTC ${o.btc1k}sats`;
+  const L4 = `Backlog   : BSV ${abbr(o.bsvCnt)} tx (≈${o.bsvBlks} ${pluralBlk(o.bsvBlks)}) | BTC ${abbr(o.btcCnt)} tx (≈${o.btcBlks} ${pluralBlk(o.btcBlks)})`;
+
+  const lines = [L1, L2, L3, L4];
+
+  if (EXPLAINER_URL) {
+    lines.push(`EXPLAINER : ${EXPLAINER_URL}`);
+  }
+
+  return clamp280(lines.join('\n'));
 }
 
 // ======= MAIN =======
@@ -149,15 +163,15 @@ async function main() {
   const [btc, bsv] = await Promise.all([fetchBtc(), fetchBsv()]);
 
   const btcFee  = btcFeeSats(btc.fees);
-  const btcEta  = btcEtaMin(btc.fees);
+  const btcEta  = btcEtaMin();
   const btc1k   = btc1kbSats(btc.fees);
-  const btcBlks = Math.max(0, Math.round((Number(btc.mempool.vsize||0)/1_000_000)*10)/10);
+  const btcBlks = Math.max(0, Math.round((Number(btc.mempool.vsize||0)/1_000_000)*10)/10); // ≈ blocks
   const btcCnt  = Number(btc.mempool.count||0);
 
   const bsvFee  = bsvSimpleSats(bsv.standardFee);
   const bsvEta  = bsvEtaMin(bsv.mempool);
   const bsv1k   = bsv1kbSats(bsv.dataFee);
-  const bsvBlks = Math.max(1, bsvEta/10);
+  const bsvBlks = Math.max(1, bsvEta/10); // ≈ blocks by ETA
   const bsvCnt  = Number(bsv.mempool.count||0);
 
   const text = buildTweet({ btcFee, btcEta, btc1k, btcCnt, btcBlks, bsvFee, bsvEta, bsv1k, bsvCnt, bsvBlks });

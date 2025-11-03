@@ -1,14 +1,16 @@
 {
   "name": "bsv-btc-metrics-bot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "post-metrics.js",
   "license": "MIT",
   "type": "commonjs",
+  "engines": { "node": ">=20" },
   "scripts": {
-    "post": "node post-metrics.js"
+    "post": "node post-metrics.js",
+    "preflight": "node preflight.js"
   },
   "dependencies": {
-    "twitter-api-v2": "^1.17.2"
+    "twitter-api-v2": "^1.27.0"
   }
 }

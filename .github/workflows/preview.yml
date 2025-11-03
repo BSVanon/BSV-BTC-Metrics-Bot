@@ -1,0 +1,50 @@
+name: Preview metrics (manual only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      btc_tier:
+        description: "BTC fee tier (fastestFee|halfHourFee|hourFee|economyFee|minimumFee)"
+        required: false
+        default: "hourFee"
+      explainer_url:
+        description: "Override explainer URL for this preview (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-metrics-bot
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    env:
+      BTC_TIER:       ${{ inputs.btc_tier || vars.BTC_TIER || 'hourFee' }}
+      EXPLAINER_URL:  ${{ inputs.explainer_url || vars.EXPLAINER_URL || '' }}
+
+      # Force preview mode
+      DRY_RUN:        "1"
+      # Nuke secrets so it can never post in preview
+      X_APP_KEY: ""
+      X_APP_SECRET: ""
+      X_ACCESS_TOKEN: ""
+      X_ACCESS_SECRET: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Preview
+        run: node post-metrics.js

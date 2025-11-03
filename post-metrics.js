@@ -1,34 +1,192 @@
-name: Post BTC/BSV Metrics (Manual)
+// ---- BOOT BANNER (prints even if require fails) ----
+console.log("[metrics-bot] starting post-metrics.js");
+console.log("[metrics-bot] node=%s cwd=%s", process.version, process.cwd());
 
-on:
-  workflow_dispatch: {}
+// Extra crash visibility
+process.on('unhandledRejection', (e) => {
+  console.error("[metrics-bot] UnhandledRejection:", e && e.stack || e);
+  process.exit(1);
+});
+process.on('uncaughtException', (e) => {
+  console.error("[metrics-bot] UncaughtException:", e && e.stack || e);
+  process.exit(1);
+});
 
-jobs:
-  post:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+// Use CommonJS so it runs whether or not package.json has "type":"module"
+let TwitterApi;
+try {
+  ({ TwitterApi } = require('twitter-api-v2'));
+  console.log("[metrics-bot] twitter-api-v2 loaded");
+} catch (e) {
+  console.error("[metrics-bot] require('twitter-api-v2') failed:", e && e.message || e);
+  process.exit(1);
+}
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+// Node 18+ has global fetch. Double-check:
+if (typeof fetch !== 'function') {
+  console.error("[metrics-bot] global fetch not available");
+  process.exit(1);
+}
 
-      - run: npm ci
+// ======= CONFIG =======
+const BTC_SIMPLE_VBYTES = 140;
+const BSV_SIMPLE_BYTES  = 226;
+const ONE_KB = 1000;
 
-      - name: Preflight
-        run: npm run preflight
-        env:
-          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
-          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:         ${{ vars.BTC_TIER }}
+const BTC_TIER = (process.env.BTC_TIER || 'hourFee').trim();
+const BTC_TIER_TO_BLOCKS = { fastestFee:1, halfHourFee:3, hourFee:6, economyFee:12, minimumFee:18 };
+const EXPLAINER_URL = (process.env.EXPLAINER_URL || "").trim();
 
-      - name: Post metrics (DRY_RUN respected)
-        env:
-          X_APP_KEY:        ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
-          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:         ${{ vars.BTC_TIER }}
-          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
-        run: node post-metrics.js
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const abbr = n => (n==null) ? '' :
+  Math.abs(n) < 1e3 ? String(n) :
+  Math.abs(n) < 1e6 ? (n/1e3).toFixed(1).replace(/\.0$/,'') + 'k' :
+  Math.abs(n) < 1e9 ? (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M' :
+                      (n/1e9).toFixed(1).replace(/\.0$/,'') + 'B';
+const clamp280 = t => t.length<=280? t : (t.slice(0,277)+'...');
+const reqKey = (o,k,h) => { if(!o || !(k in o)) throw new Error(`Missing key ${k}${h?` (${h})`:''}`); return o[k]; };
+
+const BSV_MEMPOOL_TO_BLOCKS = (txCount) => {
+  const n = Number(txCount||0);
+  if (n <= 20000) return 1;
+  if (n <= 100000) return 2;
+  return 3;
+};
+
+// ======= FETCHERS =======
+async function fetchBtc() {
+  console.log("[metrics-bot] fetching BTC fees & mempool…");
+  const feesRes = await fetch('https://mempool.space/api/v1/fees/recommended', { headers:{accept:'application/json'} });
+  if (!feesRes.ok) throw new Error(`BTC fees HTTP ${feesRes.status}`);
+  const fees = await feesRes.json();
+
+  const mpRes = await fetch('https://mempool.space/api/mempool', { headers:{accept:'application/json'} });
+  if (!mpRes.ok) throw new Error(`BTC mempool HTTP ${mpRes.status}`);
+  const mempool = await mpRes.json();
+  return { fees, mempool };
+}
+
+async function fetchBsv() {
+  console.log("[metrics-bot] fetching BSV feeQuote & mempool…");
+  const mapiRes = await fetch('https://mapi.gorillapool.io/mapi/feeQuote', { headers:{accept:'application/json'} });
+  if (!mapiRes.ok) throw new Error(`BSV MAPI HTTP ${mapiRes.status}`);
+  const mapi = await mapiRes.json();
+
+  let payloadJson;
+  try {
+    payloadJson = JSON.parse(mapi.payload);
+  } catch {
+    try {
+      payloadJson = JSON.parse(Buffer.from(String(mapi.payload), 'base64').toString('utf8'));
+    } catch {
+      throw new Error('BSV MAPI payload parse failed');
+    }
+  }
+
+  const fees = reqKey(payloadJson, 'fees', 'fee list');
+  const standardFee = fees.find(f => String(f.feeType).toLowerCase()==='standard');
+  const dataFee = fees.find(f => String(f.feeType).toLowerCase()==='data') || standardFee;
+  if (!standardFee) throw new Error('BSV: no standard fee');
+
+  const wocRes = await fetch('https://api.whatsonchain.com/v1/bsv/main/mempool/info', { headers:{accept:'application/json'} });
+  if (!wocRes.ok) throw new Error(`BSV WOC HTTP ${wocRes.status}`);
+  const mempool = await wocRes.json();
+
+  return { standardFee, dataFee, mempool };
+}
+
+// ======= MATH =======
+const btcFeeSats = (fees) => Math.round(Number(fees[BTC_TIER]) * BTC_SIMPLE_VBYTES);
+const btcEtaMin  = () => (BTC_TIER_TO_BLOCKS[BTC_TIER] ?? 6) * 10;
+const btc1kbSats = (fees) => Math.round(Number(fees[BTC_TIER]) * ONE_KB);
+
+const bsvSimpleSats = (standardFee) => {
+  const spp = Number(standardFee.miningFee.satoshis) / Number(standardFee.miningFee.bytes);
+  return Math.max(1, Math.round(spp * BSV_SIMPLE_BYTES));
+};
+const bsv1kbSats = (dataFee) => {
+  const spp = Number(dataFee.miningFee.satoshis) / Number(dataFee.miningFee.bytes);
+  return Math.max(1, Math.round(spp * ONE_KB));
+};
+const bsvEtaMin = (mp) => BSV_MEMPOOL_TO_BLOCKS(Number(mp.count||0)) * 10;
+
+function buildTweet(o){
+  const line1 = `BTC fee:${o.btcFee}s ~${o.btcEta}m | BSV fee:${o.bsvFee}s ~${o.bsvEta}m`;
+  const line2 = `1KB data — BTC:${o.btc1k}s | BSV:${o.bsv1k}s`;
+  const line3 = `Backlog — BTC:${abbr(o.btcCnt)}tx(~${o.btcBlks}b) | BSV:${abbr(o.bsvCnt)}tx(~${o.bsvBlks}b)`;
+  const more = EXPLAINER_URL ? `\nMore: ${EXPLAINER_URL}` : '';
+  return clamp280(`${line1}\n${line2}\n${line3}${more}`);
+}
+
+// ======= MAIN =======
+async function main() {
+  console.log("[metrics-bot] env flags: DRY_RUN=%s BTC_TIER=%s EXPLAINER_URL=%s", process.env.DRY_RUN || '', BTC_TIER, EXPLAINER_URL || '(none)');
+
+  console.log("[metrics-bot] checking secrets…");
+  const hasSecrets = !!process.env.X_APP_KEY && !!process.env.X_APP_SECRET && !!process.env.X_ACCESS_TOKEN && !!process.env.X_ACCESS_SECRET;
+  if (!hasSecrets && process.env.DRY_RUN !== '1') {
+    throw new Error("X secrets missing in environment (set DRY_RUN=1 to test without posting)");
+  }
+
+  let client = null;
+  let handle = 'dryrun';
+  if (process.env.DRY_RUN !== '1') {
+    console.log("[metrics-bot] auth to X…");
+    client = new TwitterApi({
+      appKey: process.env.X_APP_KEY,
+      appSecret: process.env.X_APP_SECRET,
+      accessToken: process.env.X_ACCESS_TOKEN,
+      accessSecret: process.env.X_ACCESS_SECRET,
+    });
+
+    const me = await client.v2.me();
+    handle = me?.data?.username || 'unknown';
+    console.log(`[metrics-bot] Auth OK as @${handle}`);
+  } else {
+    console.log("[metrics-bot] DRY_RUN: skipping X auth");
+  }
+
+  const [btc, bsv] = await Promise.all([fetchBtc(), fetchBsv()]);
+
+  const btcFee  = btcFeeSats(btc.fees);
+  const btcEta  = btcEtaMin(btc.fees);
+  const btc1k   = btc1kbSats(btc.fees);
+  const btcBlks = Math.max(0, Math.round((Number(btc.mempool.vsize||0)/1_000_000)*10)/10);
+  const btcCnt  = Number(btc.mempool.count||0);
+
+  const bsvFee  = bsvSimpleSats(bsv.standardFee);
+  const bsvEta  = bsvEtaMin(bsv.mempool);
+  const bsv1k   = bsv1kbSats(bsv.dataFee);
+  const bsvBlks = Math.max(1, bsvEta/10);
+  const bsvCnt  = Number(bsv.mempool.count||0);
+
+  const text = buildTweet({ btcFee, btcEta, btc1k, btcCnt, btcBlks, bsvFee, bsvEta, bsv1k, bsvCnt, bsvBlks });
+  console.log("[metrics-bot] tweet text:\n" + text);
+
+  if (process.env.DRY_RUN === '1') {
+    console.log("[metrics-bot] DRY_RUN=1 — not posting.");
+    return;
+  }
+
+  const res = await client.v2.tweet(text);
+  if (!res?.data?.id) throw new Error("Tweet API returned no id: " + JSON.stringify(res));
+  console.log(`[metrics-bot] Tweet posted: https://x.com/${handle}/status/${res.data.id}`);
+}
+
+(async function run(){
+  try {
+    await main();
+    console.log("[metrics-bot] done ok");
+  } catch (e) {
+    console.error("[metrics-bot] Fatal:", e && e.stack || e);
+    try {
+      console.error("[metrics-bot] Retrying after 2s…");
+      await sleep(2000);
+      await main();
+      console.log("[metrics-bot] done ok after retry");
+    } catch (e2) {
+      console.error("[metrics-bot] Retry failed:", e2 && e2.stack || e2);
+      process.exit(1);
+    }
+  }
+})();

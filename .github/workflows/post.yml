@@ -1,47 +1,30 @@
-name: post
+name: Post BTC/BSV Metrics
 
 on:
   schedule:
-    - cron: "0 */8 * * *"   # every 8 hours
-  workflow_dispatch:
+    - cron: "0 */8 * * *"   # every 8 hours (UTC)
+  workflow_dispatch: {}
 
 jobs:
   post:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Run actions/checkout@v4
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Run actions/setup-node@v4
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Verify repo contents
-        run: |
-          echo "PWD=$(pwd)"
-          echo "TREE:"
-          find . -maxdepth 3 -type f -print | sort
-          echo
-          if [ -f post-metrics.js ]; then
-            echo "SHA256 post-metrics.js:"
-            sha256sum post-metrics.js
-            echo
-            echo "HEAD post-metrics.js:"
-            sed -n '1,60p' post-metrics.js
-            echo
-          else
-            echo "post-metrics.js NOT FOUND at repo root"; exit 1
-          fi
 
       - name: Install deps
         run: npm ci
 
-      - name: Node env info
-        run: |
-          node -v
-          npm -v
+      - name: Preflight (prints loudly)
+        run: npm run preflight
+        env:
+          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
+          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
+          BTC_TIER:         ${{ vars.BTC_TIER }}
 
       - name: Post metrics (dry-run unless explicitly disabled)
         env:
@@ -53,6 +36,4 @@ jobs:
           BTC_TIER:         ${{ vars.BTC_TIER }}
           # default to DRY_RUN=1 unless you set a repo variable DRY_RUN=0
           DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
-        run: |
-          set -euo pipefail
-          node post-metrics.js
+        run: node post-metrics.js

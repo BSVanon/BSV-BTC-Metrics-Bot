@@ -12,13 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # ensure we can push back
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm install --package-lock-only --no-audit --no-fund
+      - name: Recreate lockfile
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock-only --no-audit --no-fund
 
       - name: Commit package-lock.json
         run: |
@@ -26,7 +29,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add package-lock.json
-            git diff --cached --quiet || git commit -m "chore: add package-lock.json"
+            git diff --cached --quiet || git commit -m "chore: regenerate package-lock.json"
             git push
           else
             echo "package-lock.json not found" && exit 1

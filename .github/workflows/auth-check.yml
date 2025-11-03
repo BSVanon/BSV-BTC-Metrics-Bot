@@ -1,36 +1,48 @@
 name: X Auth Check
-on: { workflow_dispatch: {} }
+
+on:
+  workflow_dispatch: {}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: |
-          node -e "
-            import { TwitterApi } from 'twitter-api-v2';
-            const c=new TwitterApi({
-              appKey: process.env.X_APP_KEY,
-              appSecret: process.env.X_APP_SECRET,
-              accessToken: process.env.X_ACCESS_TOKEN,
-              accessSecret: process.env.X_ACCESS_SECRET,
-            });
-            (async()=>{
-              try {
-                const me=await c.v2.me();
-                console.log('OK as @'+me.data.username+' ('+me.data.id+')');
-                const r=await c.v2.tweet('Auth check '+Date.now());
-                console.log('Posted test:', 'https://x.com/'+me.data.username+'/status/'+r.data.id);
-              } catch(e){
-                console.error('FAIL:', e?.data?.title || e?.data?.detail || e?.message || e);
-                process.exit(1);
-              }
-            })();
-          "
+
+      - run: npm ci
+
+      - name: Preflight
+        run: npm run preflight
+
+      - name: OAuth1 user-auth smoke test (posts a test tweet)
         env:
-          X_APP_KEY: ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          X_APP_KEY:        ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
+        run: |
+          node - <<'NODE'
+          const { TwitterApi } = require('twitter-api-v2');
+          (async()=>{
+            try {
+              const c=new TwitterApi({
+                appKey:process.env.X_APP_KEY,
+                appSecret:process.env.X_APP_SECRET,
+                accessToken:process.env.X_ACCESS_TOKEN,
+                accessSecret:process.env.X_ACCESS_SECRET,
+              });
+              const me=await c.v2.me();
+              console.log('OK as @'+me.data.username+' ('+me.data.id+')');
+              const r=await c.v2.tweet('Auth check '+Date.now());
+              console.log('Posted test: https://x.com/'+me.data.username+'/status/'+r.data.id);
+            } catch(e){
+              const msg = e?.data?.title || e?.data?.detail || e?.message || String(e);
+              console.error('FAIL:', msg);
+              process.exit(1);
+            }
+          })();
+          NODE

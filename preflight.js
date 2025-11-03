@@ -1,6 +1,4 @@
 // Extra-loud diagnostics to prove what file is running and where.
-
-// Print banner immediately (before any imports)
 console.log("[preflight] starting");
 console.log("[preflight] node=%s", process.version);
 console.log("[preflight] cwd=%s", process.cwd());
@@ -17,7 +15,6 @@ try {
   console.log("[preflight] ls -la failed:", e?.message || e);
 }
 
-// Prove the file exists and dump first lines
 const fs = require("node:fs");
 const path = require("node:path");
 const target = path.resolve(process.cwd(), "post-metrics.js");
@@ -43,5 +40,4 @@ try {
   console.log("[preflight] twitter-api-v2 require failed:", e?.message || e);
 }
 
-// Done
 console.log("[preflight] done");

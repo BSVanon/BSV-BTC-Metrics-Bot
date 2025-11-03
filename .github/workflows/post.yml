@@ -16,24 +16,22 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install deps
-        run: npm ci
+      - run: npm ci
 
       - name: Preflight (prints loudly)
-        run: npm run preflight
+        run: node preflight.js
         env:
-          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
-          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:         ${{ vars.BTC_TIER }}
+          DRY_RUN:       ${{ vars.DRY_RUN || '1' }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
+          BTC_TIER:      ${{ vars.BTC_TIER }}
 
-      - name: Post metrics (dry-run unless explicitly disabled)
+      - name: Post metrics
         env:
-          X_APP_KEY:        ${{ secrets.X_APP_KEY }}
-          X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
-          X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
-          EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
-          BTC_TIER:         ${{ vars.BTC_TIER }}
-          # default to DRY_RUN=1 unless you set a repo variable DRY_RUN=0
-          DRY_RUN:          ${{ vars.DRY_RUN || '1' }}
+          X_APP_KEY:       ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET:    ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN:  ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          EXPLAINER_URL:   ${{ vars.EXPLAINER_URL }}
+          BTC_TIER:        ${{ vars.BTC_TIER }}
+          DRY_RUN:         ${{ vars.DRY_RUN || '1' }}
         run: node post-metrics.js

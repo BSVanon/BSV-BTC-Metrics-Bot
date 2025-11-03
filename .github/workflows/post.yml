@@ -1,46 +1,50 @@
-name: Post BTCBSV Metrics
+name: Post BSV/BTC Metrics
 
 on:
   schedule:
-    - cron: "0 */8 * * *"   # 00:00, 08:00, 16:00 UTC
-  # Uncomment to allow manual runs:
-  # workflow_dispatch: {}
+    # Every 8 hours at :00 UTC → 00:00, 08:00, 16:00 UTC
+    - cron: "0 */8 * * *"
+  workflow_dispatch: {}   # ← enables the green "Run workflow" button
+  push:
+    branches: [ main ]    # ← any commit to main will run new code
+    paths:
+      - ".github/workflows/post.yml"
+      - "post-metrics.js"
+      - "preflight.js"
+      - "package.json"
+      - "package-lock.json"
 
 jobs:
   post:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      # X (Twitter) credentials from repo/org Secrets
-      X_APP_KEY:        ${{ secrets.X_APP_KEY }}
-      X_APP_SECRET:     ${{ secrets.X_APP_SECRET }}
-      X_ACCESS_TOKEN:   ${{ secrets.X_ACCESS_TOKEN }}
-      X_ACCESS_SECRET:  ${{ secrets.X_ACCESS_SECRET }}
-
-      # Optional explainer link (Actions → Variables)
-      EXPLAINER_URL:    ${{ vars.EXPLAINER_URL }}
-
-      # BTC fee tier to use (your script already supports this)
-      BTC_TIER:         ${{ vars.BTC_TIER || 'hourFee' }}
-
-      # Make it live by default. Set repo Variable DRY_RUN=1 to dry-run.
-      DRY_RUN:          ${{ vars.DRY_RUN || '0' }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install deps (ci)
+      - name: npm ci
         run: npm ci
 
-      - name: Preflight
+      - name: Preflight (prints loudly)
         run: node preflight.js
+        env:
+          DRY_RUN: ${{ vars.DRY_RUN || '1' }}
+          BTC_TIER: ${{ vars.BTC_TIER || 'hourFee' }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
 
       - name: Post metrics
         run: node post-metrics.js
+        env:
+          X_APP_KEY: ${{ secrets.X_APP_KEY }}
+          X_APP_SECRET: ${{ secrets.X_APP_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          EXPLAINER_URL: ${{ vars.EXPLAINER_URL }}
+          BTC_TIER: ${{ vars.BTC_TIER || 'hourFee' }}
+          DRY_RUN: ${{ vars.DRY_RUN || '1' }}
